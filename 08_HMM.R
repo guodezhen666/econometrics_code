@@ -1,91 +1,128 @@
-######################################
-######### Simulated Data
-######################################
-set.seed(123)
 
-n <- 100
-Time <- 50
-s <- 3 # number of state
+n <- 2
+T <- 500
+I <- 40
 
-transition_beta <- matrix(c(1,-1,1,-1,1,-2,2,-2,1,-1,-1,1),s,4)
-choose_beta <- matrix(c(1,1,1.2,1,2,2,1.5,3,3),s,3)
+beta <- matrix(c(1,2,-8,-8+exp(1)),2,2,1)
 
-xv <- array(rnorm(n*Time*3,0,1),c(n,Time,3))
-transition_matrix <- array(0,c(n,Time,s,s))
+rho <- c(2,4)
 
-xv_2 <- array(rnorm(n*Time*3,0,1),c(n,Time,3))
+mu <- c(3,-1)
 
-mu_1 <- rnorm(n,0,1)
-mu_2 <- rnorm(n,5,4)
-trans <- matrix(0,n,3)
+initial_pie <- c(0.7,0.3)
 
-# order_logit for transition matrix
-# too ugly
-for (time in 1:Time){
-  for(i in 1:n){
-    for(x in 1:s){
-      if(x==1){
-        u <- mu_2[i] - (transition_beta[x,1] + xv[i,time,] %*% transition_beta[x,2:4] + rlogis(1,0,1))
-        p_up <- 1 - exp(u)/(1 + exp(u))
-        random <- runif(1,0,1)
-        if(random < p_up){
-          transition_matrix[i,time,x,2] <- 1
-        }else{
-          transition_matrix[i,time,x,1] <- 1
-        }
-      }else if(x==2){
-        u_up <- mu_2[i] - (transition_beta[x,1] + xv[i,time,] %*% transition_beta[x,2:4] + rlogis(1,0,1))
-        p_up <- 1 - exp(u_up)/(1 + exp(u_up))
-        u_down <- mu_1[i] - (transition_beta[x,1] + xv[i,time,] %*% transition_beta[x,2:4] + rlogis(1,0,1))
-        p_down <- exp(u_down)/(1+exp(u_down))
-        random <- runif(1,0,1)
-        if(random < p_up){
-          transition_matrix[i,time,x,3] <- 1
-        }else if(random > p_up & random < p_down + p_up){
-          transition_matrix[i,time,x,1] <- 1
-        }else{
-          transition_matrix[i,time,x,2] <- 1
-        }
-      }else if(x==3){
-        u_down <- mu_1[i] - (transition_beta[x,1] + xv[i,time,] %*% transition_beta[x,2:4] + rlogis(1,0,1))
-        p_down <- exp(u_down)/(1+exp(u_down))
-        random <- runif(1,0,1)
-        if(random<p_down){
-          transition_matrix[i,time,x,2] <- 1
-        }else{
-          transition_matrix[i,time,x,3] <- 1
-        }
-      }
-    }
-  }
-}
+W <- matrix(rnorm(T*I)+3,T,I,1)
 
-yv <- matrix(-1,n,Time)
+R <- matrix(rnorm(T*I)*0.5+0.5,T,I,1)
 
-# pai
-pai <- sample(x=1:3,size=n,replace = TRUE)
-pai_matrix <- matrix(0,n,s)
-for(i in 1:n){
-  pai_matrix[i,pai[i]] <- 1
-}
-pai_matrix
+Y <- matrix(-1,T,I)
 
-for (time in 1:Time){
-  for(i in 1:n){
-    if(time==1){
-      state <- pai_matrix[i,]%*%transition_matrix[i,time,,]
-    }else{
-      state <- state %*% transition_matrix[i,time,,]
-    }
-    u <- choose_beta[t(state),] %*% xv_2[i,time,]
-    p <- exp(u)/(1+exp(u))
+state <- array(0,dim=c(T,I,n))
+
+#########################################
+########## simulate Data
+#########################################
+
+for(i in 1:I){
+  class_dict <- initial_pie
+  for(t in 1:T){
+    state[t,i,] <- rmultinom(1,1,class_dict)
+    u <- exp(c(W[t,i],1) %*% beta %*% state[t,i,])
+    p <- u/(1+u)
     random <- runif(1,0,1)
-    if(random < p){
-      yv[i,time] <-1 
-    }else{
-      yv[i,time] <- 0
-    }
+    Y[t,i] <- if(random<p) 1 else 0
+    
+    # transition matrix
+    transition <- matrix(0,n,n)
+    u1 <- exp(mu[1] - R[t,i]*rho[1])
+    transition[1,2] <- 1 - u1/(1+u1)
+    transition[1,1] <- u1/(1+u1)
+    
+    # last row
+    un <- exp(mu[2*n-2] - R[t,i]*rho[n])
+    transition[n,n-1] <- un/(1+un)
+    transition[n,n] <- 1 - un/(1+un)
+    
+    class_dict <- t(state[t,i,]) %*% transition
   }
 }
 
+######################################
+##############  Estimate
+######################################
 
+estimate <- function(b){
+  beta <- matrix(c(b[1],b[2],b[3],b[3]+exp(b[4])),2,2,1)
+
+  rho <- c(b[5],b[6])
+
+  mu <-c(b[7],b[8])
+  like <- matrix(0,I,1)
+
+  for(i in 1:I){
+    initial_pie <- c(0.7,0.3)
+    likelihood <- matrix(initial_pie,1,2)
+    foo <- matrix(initial_pie,1,2)
+    lscale <- 0
+    transition_matrix <- array(0,c(T,n,n))
+    for(t in 1:T){
+      code_lik <- matrix(0,n,n)
+      for(j in 1:n){
+        u <- exp(c(W[t,i],1) %*% beta[,j])
+        p <- u/(1+u)
+        code_lik[j,j] <- p*(Y[t,i]) + (1-p)*( 1 - Y[t,i])
+      }
+      # 1st row
+      transiton <- matrix(0,n,n)
+      u1 <- exp(mu[1] - R[t,i]*rho[1])
+      transition[1,1+1] <- 1 - u1/(1+u1)
+      transition[1,1] <- u1/(1+u1)
+
+      # last row
+      un <- exp(mu[2] - R[t,i]*rho[2])
+      transition[n,n-1] <- un/(1+un)
+      transition[n,n] <- 1 - un/(1+un)
+      
+      transition_matrix[t,,] <- transition
+      # likelihood <- likelihood  %*% code_lik %*% transition # professor Tan
+      # if(t!=T){ 
+      #   likelihood <- likelihood  %*% code_lik %*% transition
+      # }else{
+      #   likelihood <- likelihood  %*% code_lik 
+      # } # my approach
+      
+      # avoid under flow
+      # if(t == 1){
+      #   foo <- matrix(initial_pie,1,n) %*% code_lik
+      # }else{
+      #   foo <- foo %*% transition_matrix[t-1,,] %*% code_lik
+      # }
+      if(t == 1){
+        foo <- foo %*% code_lik
+      }else{
+        foo <- foo %*% transition_matrix[(t-1),,] %*% code_lik
+      }
+      
+      sumfoo <- sum(foo)
+      lscale <- lscale + log(sumfoo)
+      foo <- foo/sumfoo
+    }
+    # like[i,1] <- sum(likelihood)
+    # like[i,1] <- sum(likelihood)
+    like[i,1] <- lscale
+    # like[i,1] <- sum(foo)
+  }
+  return(-sum((like)))
+  # return(-sum(log(like)))
+
+}
+
+
+library(compiler)
+estimate <- cmpfun(estimate)
+
+b <- rep(0,8)
+# true_b <- c(2,3,-8,1,2,4,3,-1)
+result <- nlm(estimate, b, hessian = TRUE, print.level = 2, iterlim = 1000)
+result$estimate
+# result$hessian
