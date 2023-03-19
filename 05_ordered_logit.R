@@ -18,7 +18,7 @@ yv[u > alpha_1] <- 2
 
 loglike <- function(b){
   p1 <- plogis(b[4]- ( xv %*% b[1:3]),0,1)
-  p2 <- plogis(b[5] - ( + xv %*% b[1:3]),0,1) - p1
+  p2 <- plogis(b[5] - ( xv %*% b[1:3]),0,1) - p1
   p3 <- 1- p1 - p2
   
   like <- (yv==0)*p1 + (yv==1)*p2 + (yv==2)*p3

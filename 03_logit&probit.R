@@ -26,7 +26,7 @@ loglike <- function(b){
   like <- (yv == 0)*(1-p) + (yv==1)*p
   return(sum(-log(like)))
 }
-
+b <- rep(0,4)
 estimate.2 <- optim(rep(0,4),loglike,method="L-BFGS-B",hessian=TRUE)
 estimate.2$par
 
